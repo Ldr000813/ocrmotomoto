@@ -128,7 +128,7 @@ export default function Home() {
           overflowY: 'auto'
         }}>
           <h3 style={{ color: '#667eea', marginBottom: 15 }}>📋 OCR結果</h3>
-          {result || '(テキストが検出されませんでした)'}
+          {result!=null || '(テキストが検出されませんでした)'}
         </div>
       )}
 
