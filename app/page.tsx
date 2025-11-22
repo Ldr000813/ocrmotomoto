@@ -39,6 +39,7 @@ export default function Home() {
 
       const res = await fetch('/api/ocr', { method: 'POST', body: formData });
 
+      // ログ出力で確認
       const text = await res.text();
       console.log('Raw API Response:', text);
       const data = JSON.parse(text);
@@ -63,7 +64,6 @@ export default function Home() {
         <p>Azure AI Document Intelligence を使用した文書認識サービス</p>
       </div>
 
-      {/* アップロードボタン */}
       <div className="upload-section" style={{ textAlign: 'center', marginBottom: 20 }}>
         <button className="btn btn-primary" onClick={triggerCamera} style={{ marginRight: 10 }}>
           📷 カメラで撮影
@@ -75,15 +75,15 @@ export default function Home() {
         <input type="file" id="fileInput" accept="image/*" onChange={handleImageSelect} style={{ display: 'none' }} />
       </div>
 
-      {/* プレビュー */}
+      {/* 画像プレビュー */}
       {imagePreview && (
         <div className="preview-section" style={{ textAlign: 'center', marginBottom: 20 }}>
-          <img src={imagePreview} alt="Image Preview" style={{ maxWidth: '100%', borderRadius: 10, maxHeight: 400 }} />
+          <img src={imagePreview} alt="Image Preview" style={{ maxWidth: '100%', borderRadius: 10 }} />
         </div>
       )}
 
       {/* OCR処理ボタン */}
-      <div style={{ textAlign: 'center', margin: '20px 0' }}>
+      <div style={{ textAlign: 'center', marginBottom: 20 }}>
         <button className="btn btn-primary" onClick={processImage} disabled={!selectedFile || loading}>
           🔍 OCR処理を開始
         </button>
@@ -105,17 +105,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* ステータスメッセージ */}
-      {statusMessage && (
-        <div className={`status-message ${statusMessage.isError ? 'status-error' : 'status-success'}`} style={{
-          marginTop: 15, padding: 12, borderRadius: 8, textAlign: 'center'
-        }}>
-          {statusMessage.message}
-        </div>
-      )}
-
       {/* OCR結果 */}
-      {result && (
+      {result !== null && (
         <div className="result-section" style={{
           marginTop: 20,
           padding: 20,
@@ -123,12 +114,19 @@ export default function Home() {
           borderRadius: 10,
           fontFamily: 'Courier New, monospace',
           whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: 400,
-          overflowY: 'auto'
+          wordBreak: 'break-word'
         }}>
           <h3 style={{ color: '#667eea', marginBottom: 15 }}>📋 OCR結果</h3>
-          {result!=null || '(テキストが検出されませんでした)'}
+          {result || '(テキストが検出されませんでした)'}
+        </div>
+      )}
+
+      {/* ステータスメッセージ */}
+      {statusMessage && (
+        <div className={`status-message ${statusMessage.isError ? 'status-error' : 'status-success'}`} style={{
+          marginTop: 15, padding: 12, borderRadius: 8, textAlign: 'center'
+        }}>
+          {statusMessage.message}
         </div>
       )}
 
