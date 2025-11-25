@@ -4,40 +4,32 @@ import sharp from 'sharp';
 
 export const POST = async (req: NextRequest) => {
   try {
-    // 1. ファイル取得
     const formData = await req.formData();
     const file = formData.get('file') as File;
     if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
 
-    // 2. 環境変数
     const AZURE_ENDPOINT = process.env.AZURE_ENDPOINT!;
     const AZURE_API_KEY = process.env.AZURE_API_KEY!;
     const SUPABASE_URL = process.env.SUPABASE_URL!;
     const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
-
-    // 3. Supabase クライアント作成
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // 4. 画像/PDF/TIFF 処理
     const arrayBuffer = await file.arrayBuffer();
     let bodyForFetch: Blob;
 
     if (file.type === 'application/pdf' || file.type === 'image/tiff') {
-      // PDF/TIFF はそのまま Blob 化
       bodyForFetch = new Blob([arrayBuffer], { type: file.type });
     } else if (file.type.startsWith('image/')) {
-      // 画像は圧縮して Blob 化
       const buffer = Buffer.from(arrayBuffer);
       const compressedBuffer = await sharp(buffer)
         .jpeg({ quality: 60 })
         .toBuffer();
-
       bodyForFetch = new Blob([new Uint8Array(compressedBuffer)], { type: 'image/jpeg' });
     } else {
       return NextResponse.json({ error: 'Unsupported file type' }, { status: 400 });
     }
 
-    // 5. Azure Document Intelligence 実行（prebuilt-layout 使用）
+    // ---- Azure Layout ----
     const analyzeUrl = `${AZURE_ENDPOINT}/formrecognizer/documentModels/prebuilt-layout:analyze?api-version=2023-07-31`;
 
     const analyzeResponse = await fetch(analyzeUrl, {
@@ -57,7 +49,7 @@ export const POST = async (req: NextRequest) => {
     const operationLocation = analyzeResponse.headers.get('Operation-Location');
     if (!operationLocation) return NextResponse.json({ error: 'No Operation-Location' }, { status: 500 });
 
-    // 6. ポーリングで解析結果取得
+    // ---- Polling ----
     let resultData: any = null;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
@@ -73,10 +65,20 @@ export const POST = async (req: NextRequest) => {
       }
     }
 
-    // prebuilt-layout でも analyzeResult.content に全文テキストが入るのでそのまま利用
-    const extractedText = resultData?.analyzeResult?.content || '';
+    const analyzeResult = resultData?.analyzeResult;
+    const extractedText = analyzeResult?.content || '';
 
-    // 7. Supabase に保存
+    // ---- チェック箇所抽出 ----
+    const selectionMarks = analyzeResult?.pages
+      ?.flatMap((page: any) =>
+        page.selectionMarks?.filter((mark: any) => mark.state === 'selected')
+          .map((mark: any) => ({
+            page: page.pageNumber,
+            polygon: mark.boundingPolygon,
+          }))
+      ) || [];
+
+    // ---- Supabase 保存 ----
     const { error: supabaseError } = await supabase.from('ocr_results').insert({
       created_at: new Date().toISOString(),
       image_name: file.name,
@@ -84,20 +86,23 @@ export const POST = async (req: NextRequest) => {
       metadata: {
         file_size: file.size,
         file_type: file.type,
-        azure_model: 'prebuilt-layout', // ★ ここを変更
+        azure_model: 'prebuilt-layout',
         processed_date: new Date().toISOString(),
-        pages: resultData?.analyzeResult?.pages?.length || 1
+        pages: analyzeResult?.pages?.length || 1,
+        selection_marks_count: selectionMarks.length
       },
-      raw_result: resultData?.analyzeResult
+      raw_result: analyzeResult
     });
 
     if (supabaseError) {
       console.error('Supabase 保存エラー:', supabaseError);
-      return NextResponse.json({ error: 'Layout解析成功, しかし Supabase 保存に失敗しました' }, { status: 500 });
     }
 
-    // 8. フロントに結果返却
-    return NextResponse.json({ text: extractedText, raw: resultData?.analyzeResult });
+    // ---- フロントへ返却 ----
+    return NextResponse.json({
+      text: extractedText,
+      checkRegions: selectionMarks
+    });
 
   } catch (error: any) {
     console.error('サーバーエラー:', error);
