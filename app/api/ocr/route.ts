@@ -4,37 +4,42 @@ import sharp from 'sharp';
 
 export const POST = async (req: NextRequest) => {
   try {
+    // 1. ファイル取得
     const formData = await req.formData();
     const file = formData.get('file') as File;
     if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
 
+    // 2. 環境変数
     const AZURE_ENDPOINT = process.env.AZURE_ENDPOINT!;
     const AZURE_API_KEY = process.env.AZURE_API_KEY!;
     const SUPABASE_URL = process.env.SUPABASE_URL!;
     const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
 
+    // 3. Supabase クライアント作成
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
+    // 4. 画像/PDF/TIFF 処理
     const arrayBuffer = await file.arrayBuffer();
-
     let bodyForFetch: Blob;
 
     if (file.type === 'application/pdf' || file.type === 'image/tiff') {
+      // PDF/TIFF はそのまま Blob 化
       bodyForFetch = new Blob([arrayBuffer], { type: file.type });
     } else if (file.type.startsWith('image/')) {
+      // 画像は圧縮して Blob 化
       const buffer = Buffer.from(arrayBuffer);
       const compressedBuffer = await sharp(buffer)
         .jpeg({ quality: 60 })
         .toBuffer();
 
-      // Uint8Array にコピーして Blob に渡す（型安全）
-      const uint8Array = new Uint8Array(compressedBuffer);
-      bodyForFetch = new Blob([uint8Array], { type: 'image/jpeg' });
+      bodyForFetch = new Blob([new Uint8Array(compressedBuffer)], { type: 'image/jpeg' });
     } else {
       return NextResponse.json({ error: 'Unsupported file type' }, { status: 400 });
     }
 
+    // 5. Azure OCR 実行（prebuilt-read 例、必要に応じて prebuilt-layout に変更）
     const analyzeUrl = `${AZURE_ENDPOINT}/formrecognizer/documentModels/prebuilt-read:analyze?api-version=2023-07-31`;
+
     const analyzeResponse = await fetch(analyzeUrl, {
       method: 'POST',
       headers: {
@@ -52,6 +57,7 @@ export const POST = async (req: NextRequest) => {
     const operationLocation = analyzeResponse.headers.get('Operation-Location');
     if (!operationLocation) return NextResponse.json({ error: 'No Operation-Location' }, { status: 500 });
 
+    // 6. ポーリングでOCR結果取得
     let resultData: any = null;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
@@ -69,6 +75,7 @@ export const POST = async (req: NextRequest) => {
 
     const extractedText = resultData?.analyzeResult?.content || '';
 
+    // 7. Supabase に保存
     const { error: supabaseError } = await supabase.from('ocr_results').insert({
       created_at: new Date().toISOString(),
       image_name: file.name,
@@ -88,6 +95,7 @@ export const POST = async (req: NextRequest) => {
       return NextResponse.json({ error: 'OCR成功, しかし Supabase 保存に失敗しました' }, { status: 500 });
     }
 
+    // 8. フロントに結果返却
     return NextResponse.json({ text: extractedText });
 
   } catch (error: any) {
