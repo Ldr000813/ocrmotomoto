@@ -37,8 +37,8 @@ export const POST = async (req: NextRequest) => {
       return NextResponse.json({ error: 'Unsupported file type' }, { status: 400 });
     }
 
-    // 5. Azure OCR 実行（prebuilt-read 例、必要に応じて prebuilt-layout に変更）
-    const analyzeUrl = `${AZURE_ENDPOINT}/formrecognizer/documentModels/prebuilt-read:analyze?api-version=2023-07-31`;
+    // 5. Azure Document Intelligence 実行（prebuilt-layout 使用）
+    const analyzeUrl = `${AZURE_ENDPOINT}/formrecognizer/documentModels/prebuilt-layout:analyze?api-version=2023-07-31`;
 
     const analyzeResponse = await fetch(analyzeUrl, {
       method: 'POST',
@@ -57,7 +57,7 @@ export const POST = async (req: NextRequest) => {
     const operationLocation = analyzeResponse.headers.get('Operation-Location');
     if (!operationLocation) return NextResponse.json({ error: 'No Operation-Location' }, { status: 500 });
 
-    // 6. ポーリングでOCR結果取得
+    // 6. ポーリングで解析結果取得
     let resultData: any = null;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
@@ -69,10 +69,11 @@ export const POST = async (req: NextRequest) => {
         resultData = json;
         break;
       } else if (json.status === 'failed') {
-        return NextResponse.json({ error: 'OCR failed' }, { status: 500 });
+        return NextResponse.json({ error: 'Layout analysis failed' }, { status: 500 });
       }
     }
 
+    // prebuilt-layout でも analyzeResult.content に全文テキストが入るのでそのまま利用
     const extractedText = resultData?.analyzeResult?.content || '';
 
     // 7. Supabase に保存
@@ -83,7 +84,7 @@ export const POST = async (req: NextRequest) => {
       metadata: {
         file_size: file.size,
         file_type: file.type,
-        azure_model: 'prebuilt-read',
+        azure_model: 'prebuilt-layout', // ★ ここを変更
         processed_date: new Date().toISOString(),
         pages: resultData?.analyzeResult?.pages?.length || 1
       },
@@ -92,11 +93,11 @@ export const POST = async (req: NextRequest) => {
 
     if (supabaseError) {
       console.error('Supabase 保存エラー:', supabaseError);
-      return NextResponse.json({ error: 'OCR成功, しかし Supabase 保存に失敗しました' }, { status: 500 });
+      return NextResponse.json({ error: 'Layout解析成功, しかし Supabase 保存に失敗しました' }, { status: 500 });
     }
 
     // 8. フロントに結果返却
-    return NextResponse.json({ text: extractedText });
+    return NextResponse.json({ text: extractedText, raw: resultData?.analyzeResult });
 
   } catch (error: any) {
     console.error('サーバーエラー:', error);
